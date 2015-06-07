@@ -156,75 +156,19 @@ func AppDelete(rw http.ResponseWriter, r *http.Request) {
 	RenderText(rw, "ok")
 }
 
-func AppPromote(rw http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	app := vars["app"]
-
-	release, err := models.GetRelease(app, GetForm(r, "release"))
-
-	if err != nil {
-		RenderError(rw, err)
-		return
-	}
-
-	// change := &models.Change{
-	//   App:      app,
-	//   Created:  time.Now(),
-	//   Metadata: "{}",
-	//   TargetId: release.Id,
-	//   Type:     "PROMOTE",
-	//   Status:   "changing",
-	//   User:     "convox",
-	// }
-
-	// change.Save()
-
-	// events, err := models.ListEvents(app)
-	// if err != nil {
-	//   log.Error(err)
-	//   change.Status = "failed"
-	//   change.Metadata = err.Error()
-	//   change.Save()
-
-	//   RenderError(rw, err)
-	//   return
-	// }
-	// log.Success("step=events.list app=%q release=%q", release.App, release.Id)
-
-	err = release.Promote()
-
-	if err != nil {
-		RenderError(rw, err)
-		return
-	}
-
-	// if err != nil {
-	//   log.Error(err)
-	//   change.Status = "failed"
-	//   change.Metadata = fmt.Sprintf("{\"error\": \"%s\"}", err.Error())
-	//   change.Save()
-
-	//   RenderError(rw, err)
-	//   return
-	// }
-	// log.Success("step=release.promote app=%q release=%q", release.App, release.Id)
-
-	Redirect(rw, r, fmt.Sprintf("/apps/%s", app))
-
-	// a, err := models.GetApp("", app)
-	// if err != nil {
-	//   log.Error(err)
-	//   panic(err)
-	// }
-	// log.Success("step=app.get app=%q", release.App)
-	// go a.WatchForCompletion(change, events)
-}
-
 func AppBuilds(rw http.ResponseWriter, r *http.Request) {
 	log := appsLogger("builds").Start()
 
 	vars := mux.Vars(r)
 	app := vars["app"]
+
+	a, err := models.GetApp(app)
+
+	if err != nil {
+		helpers.Error(log, err)
+		RenderError(rw, err)
+		return
+	}
 
 	builds, err := models.ListBuilds(app)
 
@@ -234,7 +178,12 @@ func AppBuilds(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RenderPartial(rw, "app", "builds", builds)
+	params := map[string]interface{}{
+		"Active": a.ActiveBuild(),
+		"Builds": builds,
+	}
+
+	RenderPartial(rw, "app", "builds", params)
 }
 
 func AppChanges(rw http.ResponseWriter, r *http.Request) {
@@ -369,36 +318,6 @@ func AppStream(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Success("step=ended app=%q", app.Name)
-}
-
-func AppReleases(rw http.ResponseWriter, r *http.Request) {
-	log := appsLogger("releases").Start()
-
-	vars := mux.Vars(r)
-	app := vars["app"]
-
-	a, err := models.GetApp(app)
-
-	if err != nil {
-		helpers.Error(log, err)
-		RenderError(rw, err)
-		return
-	}
-
-	releases, err := models.ListReleases(app)
-
-	if err != nil {
-		helpers.Error(log, err)
-		RenderError(rw, err)
-		return
-	}
-
-	params := map[string]interface{}{
-		"App":      a,
-		"Releases": releases,
-	}
-
-	RenderPartial(rw, "app", "releases", params)
 }
 
 func AppResources(rw http.ResponseWriter, r *http.Request) {

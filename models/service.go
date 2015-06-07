@@ -37,13 +37,13 @@ func LinkService(app string, process string, stack string) error {
 		return err
 	}
 
-	r, err := a.LatestRelease()
+	b, err := a.LatestBuild()
 
 	if err != nil {
 		return err
 	}
 
-	formation, err := r.Formation()
+	formation, err := b.Formation()
 
 	if err != nil {
 		return err

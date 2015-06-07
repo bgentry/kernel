@@ -132,16 +132,6 @@ func (a *App) Cleanup() error {
 		go cleanupBuild(build)
 	}
 
-	releases, err := ListReleases(a.Name)
-
-	if err != nil {
-		return err
-	}
-
-	for _, release := range releases {
-		go cleanupRelease(release)
-	}
-
 	return nil
 }
 
@@ -227,40 +217,26 @@ func (a *App) SubscribeLogs(output chan []byte, quit chan bool) error {
 	return nil
 }
 
+func (a *App) ActiveBuild() string {
+	return a.Parameters["Release"]
+}
+
 func (a *App) ActiveRelease() string {
 	return a.Parameters["Release"]
 }
 
-func (a *App) ForkRelease() (*Release, error) {
-	release, err := a.LatestRelease()
+func (a *App) LatestBuild() (*Build, error) {
+	builds, err := ListBuilds(a.Name)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if release == nil {
-		r := NewRelease(a.Name)
-		release = &r
-	}
-
-	release.Id = generateId("R", 10)
-	release.Created = time.Time{}
-
-	return release, nil
-}
-
-func (a *App) LatestRelease() (*Release, error) {
-	releases, err := ListReleases(a.Name)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if len(releases) == 0 {
+	if len(builds) == 0 {
 		return nil, nil
 	}
 
-	return &releases[0], nil
+	return &builds[0], nil
 }
 
 func (a *App) WatchForCompletion(change *Change, original Events) {
@@ -451,20 +427,6 @@ func (a *App) Processes() Processes {
 	return processes
 }
 
-func (a *App) Releases() Releases {
-	releases, err := ListReleases(a.Name)
-
-	if err != nil {
-		if err.(awserr.Error).Message() == "Requested resource not found" {
-			return Releases{}
-		} else {
-			panic(err)
-		}
-	}
-
-	return releases
-}
-
 func (a *App) Resources() Resources {
 	resources, err := ListResources(a.Name)
 
@@ -533,14 +495,6 @@ func cleanupBucketObject(bucket, key, version string) {
 
 func cleanupBuild(build Build) {
 	err := build.Cleanup()
-
-	if err != nil {
-		fmt.Printf("error: %s\n", err)
-	}
-}
-
-func cleanupRelease(release Release) {
-	err := release.Cleanup()
 
 	if err != nil {
 		fmt.Printf("error: %s\n", err)

@@ -218,15 +218,19 @@ td.buttons {
 	padding-right: 8px !important;
 }
 
+td.buttons .btn {
+	margin-left: 2px;
+	margin-right: 2px;
+}
+
 .id {
 	font-family: monospace;
 }
 
-.release-active {
+.build-active {
 	font-size: 0.9em;
-	padding-left: 10px;
-	padding-right: 11px;
-	padding-bottom: 3px;
+	font-weight: bold;
+	padding: 1px 9px 1px 10px;
 }
 
 .labelled-value {
@@ -293,11 +297,6 @@ pre.modal-scroll {
 .powered-by .location {
 	color: #9d9d9d;
 	display: inline-block;
-}
-
-.release-active {
-	font-weight: bold;
-	padding: 1px 9px 1px 10px;
 }
 
 pre.logs {

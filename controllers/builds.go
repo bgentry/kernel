@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/convox/kernel/Godeps/_workspace/src/github.com/ddollar/logger"
@@ -16,9 +17,15 @@ func BuildCreate(rw http.ResponseWriter, r *http.Request) {
 	app := vars["app"]
 	repo := GetForm(r, "repo")
 
-	build := models.NewBuild(app)
+	build, err := models.NewBuild(app, "image")
 
-	err := build.Save()
+	if err != nil {
+		helpers.Error(log, err)
+		RenderError(rw, err)
+		return
+	}
+
+	err = build.Save()
 
 	if err != nil {
 		helpers.Error(log, err)
@@ -31,6 +38,28 @@ func BuildCreate(rw http.ResponseWriter, r *http.Request) {
 	go build.Execute(repo)
 
 	RenderText(rw, "ok")
+}
+
+func BuildPromote(rw http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	app := vars["app"]
+	build := vars["build"]
+
+	b, err := models.GetBuild(app, build)
+
+	if err != nil {
+		RenderError(rw, err)
+		return
+	}
+
+	err = b.Promote()
+
+	if err != nil {
+		RenderError(rw, err)
+		return
+	}
+
+	Redirect(rw, r, fmt.Sprintf("/apps/%s", app))
 }
 
 func buildsLogger(at string) *logger.Logger {

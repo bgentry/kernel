@@ -71,45 +71,19 @@ func PutEnvironment(app string, env Environment) error {
 		return err
 	}
 
-	release, err := a.ForkRelease()
+	build, err := NewBuild(app, "environment")
 
 	if err != nil {
 		return err
 	}
 
-	release.Env = env.Raw()
+	build.Env = env.Raw()
 
-	err = release.Save()
+	err = build.Save()
 
 	if err != nil {
 		return err
 	}
-
-	// eold := strings.Split(release.Env, "\n")
-	// enew := strings.Split(env.Raw(), "\n")
-	// diff := difflib.Diff(eold, enew)
-
-	// metadata, err := diffMetadata(diff)
-
-	// if err != nil {
-	//   return err
-	// }
-
-	// change := &Change{
-	//   App:      app,
-	//   Created:  time.Now(),
-	//   Metadata: metadata,
-	//   TargetId: release.Id,
-	//   Type:     "RELEASE",
-	//   Status:   "complete",
-	//   User:     "convox",
-	// }
-
-	// err = change.Save()
-
-	// if err != nil {
-	//   fmt.Fprintf(os.Stderr, "error: %s\n", err)
-	// }
 
 	e := []byte(env.Raw())
 

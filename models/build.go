@@ -3,13 +3,18 @@ package models
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/convox/kernel/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/aws"
+	"github.com/convox/kernel/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/service/cloudformation"
 	"github.com/convox/kernel/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/service/dynamodb"
+	"github.com/convox/kernel/Godeps/_workspace/src/github.com/convox/env/crypt"
 )
 
 type Build struct {
@@ -17,9 +22,11 @@ type Build struct {
 
 	App string
 
-	Logs    string
-	Release string
-	Status  string
+	Env      string
+	Logs     string
+	Manifest string
+	Reason   string
+	Status   string
 
 	Started time.Time
 	Ended   time.Time
@@ -27,13 +34,32 @@ type Build struct {
 
 type Builds []Build
 
-func NewBuild(app string) Build {
-	return Build{
-		Id:  generateId("B", 10),
-		App: app,
+func NewBuild(app, reason string) (*Build, error) {
+	a, err := GetApp(app)
 
-		Status: "created",
+	if err != nil {
+		return nil, err
 	}
+
+	build, err := a.LatestBuild()
+
+	if err != nil {
+		return nil, err
+	}
+
+	if build == nil {
+		build = &Build{App: app}
+	}
+
+	build.Id = generateId("B", 10)
+
+	build.Logs = ""
+	build.Reason = reason
+	build.Status = "created"
+	build.Started = time.Now()
+	build.Ended = time.Time{}
+
+	return build, nil
 }
 
 func ListBuilds(app string) (Builds, error) {
@@ -66,6 +92,10 @@ func ListBuilds(app string) (Builds, error) {
 }
 
 func GetBuild(app, id string) (*Build, error) {
+	if id == "" {
+		return nil, fmt.Errorf("build id required")
+	}
+
 	req := &dynamodb.GetItemInput{
 		ConsistentRead: aws.Boolean(true),
 		Key: &map[string]*dynamodb.AttributeValue{
@@ -86,6 +116,12 @@ func GetBuild(app, id string) (*Build, error) {
 }
 
 func (b *Build) Save() error {
+	app, err := GetApp(b.App)
+
+	if err != nil {
+		return err
+	}
+
 	if b.Id == "" {
 		return fmt.Errorf("Id can not be blank")
 	}
@@ -104,21 +140,45 @@ func (b *Build) Save() error {
 		TableName: aws.String(buildsTable(b.App)),
 	}
 
+	if b.Env != "" {
+		(*req.Item)["env"] = &dynamodb.AttributeValue{S: aws.String(b.Env)}
+	}
+
 	if b.Logs != "" {
 		(*req.Item)["logs"] = &dynamodb.AttributeValue{S: aws.String(b.Logs)}
 	}
 
-	if b.Release != "" {
-		(*req.Item)["release"] = &dynamodb.AttributeValue{S: aws.String(b.Release)}
+	if b.Manifest != "" {
+		(*req.Item)["manifest"] = &dynamodb.AttributeValue{S: aws.String(b.Manifest)}
+	}
+
+	if b.Reason != "" {
+		(*req.Item)["reason"] = &dynamodb.AttributeValue{S: aws.String(b.Reason)}
 	}
 
 	if !b.Ended.IsZero() {
 		(*req.Item)["ended"] = &dynamodb.AttributeValue{S: aws.String(b.Ended.Format(SortableTime))}
 	}
 
-	_, err := DynamoDB().PutItem(req)
+	_, err = DynamoDB().PutItem(req)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	env := []byte(b.Env)
+
+	if app.Parameters["Key"] != "" {
+		cr := crypt.New(os.Getenv("AWS_REGION"), os.Getenv("AWS_ACCESS"), os.Getenv("AWS_SECRET"))
+
+		env, err = cr.Encrypt(app.Parameters["Key"], []byte(env))
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return s3Put(app.Outputs["Settings"], fmt.Sprintf("builds/%s/env", b.Id), env, true)
 }
 
 func (b *Build) Cleanup() error {
@@ -206,31 +266,15 @@ func (b *Build) Execute(repo string) {
 		return
 	}
 
-	app, err := GetApp(b.App)
+	env, err := GetEnvironment(b.App)
 
 	if err != nil {
 		b.Fail(err)
 		return
 	}
 
-	release, err := app.ForkRelease()
-
-	if err != nil {
-		b.Fail(err)
-		return
-	}
-
-	release.Build = b.Id
-	release.Manifest = manifest
-
-	err = release.Save()
-
-	if err != nil {
-		b.Fail(err)
-		return
-	}
-
-	b.Release = release.Id
+	b.Env = env.Raw()
+	b.Manifest = manifest
 	b.Status = "complete"
 	b.Ended = time.Now()
 	b.Save()
@@ -243,8 +287,146 @@ func (b *Build) Fail(err error) {
 	b.Save()
 }
 
+func (b *Build) EnvironmentUrl() string {
+	app, err := GetApp(b.App)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return ""
+	}
+
+	return fmt.Sprintf("https://%s.s3.amazonaws.com/builds/%s/env", app.Outputs["Settings"], b.Id)
+}
+
+func (b *Build) Formation() (string, error) {
+	args := []string{"run", "-i", "convox/app", "-mode", "staging"}
+
+	cmd := exec.Command("docker", args...)
+	cmd.Stderr = os.Stderr
+
+	in, err := cmd.StdinPipe()
+
+	if err != nil {
+		return "", err
+	}
+
+	out, err := cmd.StdoutPipe()
+
+	if err != nil {
+		return "", err
+	}
+
+	err = cmd.Start()
+
+	if err != nil {
+		return "", err
+	}
+
+	io.WriteString(in, b.Manifest)
+	in.Close()
+
+	data, err := ioutil.ReadAll(out)
+
+	if err != nil {
+		return "", err
+	}
+
+	err = cmd.Wait()
+
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}
+
 func (b *Build) Image(process string) string {
 	return fmt.Sprintf("%s/%s-%s:%s", os.Getenv("REGISTRY"), b.App, process, b.Id)
+}
+
+func (b *Build) Processes() (Processes, error) {
+	manifest, err := LoadManifest(b.Manifest)
+
+	fmt.Printf("%+v\n", manifest)
+
+	if err != nil {
+		return nil, err
+	}
+
+	ps := manifest.Processes()
+
+	ss, err := ListServices(b.App)
+
+	for _, s := range ss {
+		if s.Stack == "" {
+			ps = append(ps, Process{
+				App:   b.App,
+				Name:  s.Name,
+				Count: 1,
+			})
+		}
+	}
+
+	return ps, nil
+}
+
+func (b *Build) Promote() error {
+	formation, err := b.Formation()
+
+	if err != nil {
+		return err
+	}
+
+	existing, err := formationParameters(formation)
+
+	if err != nil {
+		return err
+	}
+
+	app, err := GetApp(b.App)
+
+	if err != nil {
+		return err
+	}
+
+	pss, err := b.Processes()
+
+	if err != nil {
+		return err
+	}
+
+	for _, ps := range pss {
+		app.Parameters[fmt.Sprintf("%sCommand", upperName(ps.Name))] = ps.Command
+		app.Parameters[fmt.Sprintf("%sImage", upperName(ps.Name))] = fmt.Sprintf("%s/%s-%s:%s", os.Getenv("REGISTRY_HOST"), b.App, ps.Name, b.Id)
+		app.Parameters[fmt.Sprintf("%sScale", upperName(ps.Name))] = strconv.Itoa(ps.Count)
+	}
+
+	app.Parameters["Environment"] = b.EnvironmentUrl()
+	app.Parameters["Kernel"] = CustomTopic
+	app.Parameters["Release"] = b.Id
+
+	fmt.Printf("%+v\n%+v\n", pss, app.Parameters)
+
+	params := []*cloudformation.Parameter{}
+
+	for key, value := range app.Parameters {
+		if _, ok := existing[key]; ok {
+			fmt.Printf("key = %+v\n", key)
+			fmt.Printf("value = %+v\n", value)
+			params = append(params, &cloudformation.Parameter{ParameterKey: aws.String(key), ParameterValue: aws.String(value)})
+		}
+	}
+
+	req := &cloudformation.UpdateStackInput{
+		Capabilities: []*string{aws.String("CAPABILITY_IAM")},
+		StackName:    aws.String(b.App),
+		TemplateBody: aws.String(formation),
+		Parameters:   params,
+	}
+
+	_, err = CloudFormation().UpdateStack(req)
+
+	return err
 }
 
 func buildsTable(app string) string {
@@ -256,12 +438,14 @@ func buildFromItem(item map[string]*dynamodb.AttributeValue) *Build {
 	ended, _ := time.Parse(SortableTime, coalesce(item["ended"], ""))
 
 	return &Build{
-		Id:      coalesce(item["id"], ""),
-		App:     coalesce(item["app"], ""),
-		Logs:    coalesce(item["logs"], ""),
-		Release: coalesce(item["release"], ""),
-		Status:  coalesce(item["status"], ""),
-		Started: started,
-		Ended:   ended,
+		Id:       coalesce(item["id"], ""),
+		App:      coalesce(item["app"], ""),
+		Env:      coalesce(item["env"], ""),
+		Logs:     coalesce(item["logs"], ""),
+		Manifest: coalesce(item["manifest"], ""),
+		Reason:   coalesce(item["reason"], ""),
+		Status:   coalesce(item["status"], ""),
+		Started:  started,
+		Ended:    ended,
 	}
 }

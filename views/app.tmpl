@@ -128,7 +128,6 @@
 			<li role="presentation"><a href="#deployments" id="deployments-tab" class="trackable" role="tab" data-source="/apps/{{ .Name }}/deployments">Deployments</a></li>
 			<li role="presentation"><a href="#logs" id="logs-tab" class="trackable" role="tab" data-source="/apps/{{ .Name }}/logs">Logs</a></li>
 			<li role="presentation"><a href="#builds" id="builds-tab" class="trackable" role="tab" data-source="/apps/{{ .Name }}/builds">Builds</a></li>
-			<li role="presentation"><a href="#releases" id="releases-tab" class="trackable" role="tab" data-source="/apps/{{ .Name }}/releases">Releases</a></li>
 			<li role="presentation"><a href="#environment" id="environment-tab" class="trackable" role="tab" data-source="/apps/{{ .Name }}/environment">Environment</a></li>
 			<li role="presentation"><a href="#debug" id="debug-tab" class="trackable" role="tab" data-source="/apps/{{ .Name }}/events">Debug</a></li>
 		</ul>
@@ -221,28 +220,37 @@
 			<tr>
 				<th></th>
 				<th>ID</th>
+				<th>Reason</th>
 				<th class="expand">Started</th>
-				<th>Release</th>
 				<th>Duration</th>
-				<th></th>
+				<th colspan="2"></th>
 			</tr>
 		</thead>
 		<tbody>
-			{{ range . }}
+			{{ $active := .Active }}
+			{{ range .Builds }}
 				<tr>
 					<td class="statusicon">{{ statusicon .Status }}</td>
 					<td class="id">{{ .Id }}</td>
+					<td>{{ .Reason }}</td>
 					<td>{{ timeago .Started }}</td>
-					<td class="id">{{ .Release }}</td>
 					<td>{{ duration .Started .Ended }}</td>
 					<td class="buttons">
+						<button class="btn btn-xs btn-info build-logs" title="Environment" data-toggle="modal" data-target="#build-environment-{{ .Id }}">Environment</button>
 						<button class="btn btn-xs btn-info build-logs" title="Logs" data-toggle="modal" data-target="#build-logs-{{ .Id }}">Logs</button>
+					</td>
+					<td class="buttons">
+						{{ if eq .Id $active }}
+							<button class="btn btn-success btn-xs promote-build build-active" data-build="{{ .Id }}">Active</button>
+						{{ else }}
+							<button class="btn btn-warning btn-xs promote-build trackable" id="promote-build" data-build="{{ .Id }}">Promote</button>
+						{{ end }}
 					</td>
 				</tr>
 			{{ end }}
 		</tbody>
 	</table>
-	{{ range . }}
+	{{ range .Builds }}
 		<div id="build-logs-{{ .Id }}" class="modal fade">
 			<div class="modal-dialog modal-lg">
 				<div class="modal-content">
@@ -257,100 +265,25 @@
 			</div>
 		</div>
 	{{ end }}
-{{ end }}
-
-{{ define "changes" }}
-	<table class="table table-striped table-bordered app-changes">
-		<thead>
-			<tr>
-				<th></th>
-				<th>User</th>
-				<th>Type</th>
-				<th>Target</th>
-				<th>Started</th>
-				<th class="expand">Changes</th>
-			</tr>
-		</thead>
-		<tbody>
-			{{ range . }}
-				<tr>
-					<td class="statusicon">{{ statusicon .Status }}</td>
-					<td>{{ .User }}</td>
-					<td>{{ .Type }}</td>
-					<td><span class="id">{{ .TargetId }}</span></td>
-					<td>{{ timeago .Created }}</td>
-					<td class="wrap expand">
-						{{ if .M.Error }}
-							<span class="transaction-error">{{ .M.Error }}</span>
-						{{ else }}
-							<ul class="transactions">
-								{{ range .M.Transactions }}
-									{{ partial "app" .Type . }}
-								{{ end }}
-							</ul>
-						{{ end }}
-					</td>
-				</tr>
-			{{ end }}
-		</tbody>
-	</table>
 	<script>
 		$('.timeago').timeago();
 
-		table_scroll($('.app-changes'), '365px');
+		$('.promote-build').on('click', function() {
+			$(this).prop('disabled', true);
+			$('#spinner').show();
+
+			$.ajax({ type:'POST', url:window.location.pathname+'/builds/'+$(this).data('build')+'/promote' }).done(function(msg) {
+				$('#alert').hide();
+				$('#spinner').hide();
+				refresh_tab();
+			}).fail(function(msg) {
+				$('#alert .message').html(msg.responseText);
+				$('#alert').show();
+				$('#spinner').hide();
+				refresh_tab();
+			});
+		});
 	</script>
-{{ end }}
-
-{{ define "AMI" }}
-	<li>AMI changed from {{ name .Status }} to {{ name .Name }}</li>
-{{ end }}
-
-{{ define "AWS::AutoScaling::AutoScalingGroup" }}
-	<li>Roll Auto Scaling Group {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::AutoScaling::LaunchConfiguration" }}
-	<li>Update Launch Configuration {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::CloudFormation::Stack" }}
-	<li>Update Stack {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::EC2::SecurityGroup" }}
-	<li>Update Security Group {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::EC2::VPC" }}
-	<li>Update VPC {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::ElasticLoadBalancing::LoadBalancer" }}
-	<li>Update Load Balancer {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::IAM::InstanceProfile" }}
-	<li>Update Instance Profile {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::IAM::Role" }}
-	<li>Update IAM Role {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::Kinesis::Stream" }}
-	<li>Update Kinesis Stream {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::RDS::DBInstance" }}
-	<li>Update RDS Instance {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "AWS::S3::Bucket" }}
-	<li>Update S3 Bucket {{ name .Name }} {{ duration .Start .End }}</li>
-{{ end }}
-
-{{ define "Env::Diff" }}
-	<li>Env {{ name .Name }} {{ .Status }}</li>
 {{ end }}
 
 {{ define "deployments" }}
@@ -432,77 +365,6 @@
 	<script>
 		connect_log_socket($('#app-logs'), '/apps/{{ . }}/logs/stream');
 	</script>
-{{ end }}
-
-{{ define "releases" }}
-	{{ $active := .App.ActiveRelease }}
-	<table class="table table-striped table-bordered">
-		<thead>
-			<tr>
-				<th>ID</th>
-				<th class="expand">Created</th>
-				<th>Build</th>
-				<th></th>
-				<th></th>
-			</tr>
-		</thead>
-		<tbody>
-			{{ range .Releases }}
-				<tr>
-					<td class="id">{{ .Id }}</td>
-					<td>{{ timeago .Created }}</td>
-					<td class="id">{{ .Build }}</td>
-					<td class="buttons">
-						<button class="btn btn-xs btn-info" title="Env for {{ .Id }}" data-toggle="modal" data-target="#release-env-{{ .Id }}">Env</button>
-					</td>
-					<td class="buttons">
-						{{ if eq .Id $active }}
-							<button class="btn btn-success btn-xs promote-release release-active" data-release="{{ .Id }}">Active</button>
-						{{ else }}
-							<button class="btn btn-warning btn-xs promote-release trackable" id="promote-release" data-release="{{ .Id }}">Promote</button>
-						{{ end }}
-					</td>
-				</tr>
-			{{ end }}
-		</tbody>
-	</table>
-	{{ range .Releases }}
-		{{ template "release" . }}
-	{{ end }}
-	<script>
-		$('.timeago').timeago();
-
-		$('.promote-release').on('click', function() {
-			$(this).prop('disabled', true);
-			$('#spinner').show();
-			$.ajax({ type: 'POST', url:window.location.pathname+'/promote', data: { release: $(this).data('release') }}).done(function(msg) {
-				$('#alert').hide();
-				$('#spinner').hide();
-				refresh_tab();
-			}).fail(function(msg) {
-				$('#alert .message').html(msg.responseText);
-				$('#alert').show();
-				$('#spinner').hide();
-				refresh_tab();
-			});
-		});
-	</script>
-{{ end }}
-
-{{ define "release" }}
-	<div id="release-env-{{ .Id }}" class="modal fade">
-		<div class="modal-dialog modal-lg">
-			<div class="modal-content">
-				<div class="modal-header">
-					<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-					<h4 class="modal-title">Env for {{ .Id }}</h4>
-				</div>
-				<div class="modal-body">
-					<pre>{{ .Env }}</pre>
-				</div>
-			</div>
-		</div>
-	</div>
 {{ end }}
 
 {{ define "resources" }}
