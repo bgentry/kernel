@@ -195,8 +195,14 @@ func (r *Release) Promote() error {
 	}
 
 	for _, ps := range pss {
+		image := fmt.Sprintf("%s/%s-%s:%s", os.Getenv("REGISTRY_HOST"), r.App, ps.Name, r.Build)
+
+		if ps.Name == "unnamed" {
+			image = fmt.Sprintf("%s/%s:%s", os.Getenv("REGISTRY_HOST"), r.App, r.Build)
+		}
+
 		app.Parameters[fmt.Sprintf("%sCommand", upperName(ps.Name))] = ps.Command
-		app.Parameters[fmt.Sprintf("%sImage", upperName(ps.Name))] = fmt.Sprintf("%s/%s-%s:%s", os.Getenv("REGISTRY_HOST"), r.App, ps.Name, r.Build)
+		app.Parameters[fmt.Sprintf("%sImage", upperName(ps.Name))] = image
 		app.Parameters[fmt.Sprintf("%sScale", upperName(ps.Name))] = strconv.Itoa(ps.Count)
 	}
 
